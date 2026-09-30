@@ -2812,7 +2812,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("settles a native subagent's child thread when its provider process is gone", () =>
+  it.effect.each(["running", "waiting"] as const)("settles a %s native child root", (rootStatus) =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -2921,6 +2921,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
             occurredAt: now,
             payload: {
               ...node({ id: childRootId, threadId: childId, runId: null, kind: "root_turn" }),
+              status: rootStatus,
               providerThreadId: childProviderThreadId,
               providerTurnId: runningTurnId,
             },
@@ -3113,6 +3114,10 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), childId);
       const recoveryProjection = yield* projectionStore.getRuntimeRecoveryProjection(childId);
       assert.equal(
+        recoveryProjection.nodes.find((candidate) => candidate.id === childRootId)?.status,
+        rootStatus,
+      );
+      assert.equal(
         recoveryProjection.providerTurns.find((turn) => turn.id === runningTurnId)?.status,
         "running",
       );
@@ -3145,7 +3150,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.equal(completedTurn?.status, "completed");
       assert.isNotNull(completedTurn?.completedAt ?? null);
       assert.notInclude(yield* projectionStore.getRecoveryThreadIds("runtime"), childId);
-    }),
+    }).pipe(Effect.provide(Layer.fresh(TestLayer))),
   );
 
   it.effect("allocates collision-free positions beyond 100 items and rebuilds equivalently", () =>
