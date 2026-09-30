@@ -37,24 +37,6 @@ function makeHarness(responder: (request: Request) => Promise<Response> | Respon
   return { input, written, requests, bridge };
 }
 
-function sseChunkResponse(chunks: ReadonlyArray<string>): Response {
-  const encoder = new TextEncoder();
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
-        controller.close();
-      },
-    }),
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
-
-const collectPayloads = (response: Response) =>
-  Stream.runCollect(responsePayloads(response)).pipe(
-    Effect.map((payloads) => Array.from(payloads)),
-  );
-
 describe("AcpMcpStdioBridge", () => {
   it.effect("preserves the original transport failure as the typed error cause", () =>
     Effect.gen(function* () {
@@ -371,6 +353,24 @@ describe("AcpMcpStdioBridge", () => {
 });
 
 describe("responsePayloads SSE framing", () => {
+  function sseChunkResponse(chunks: ReadonlyArray<string>): Response {
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+          controller.close();
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  }
+
+  const collectPayloads = (response: Response) =>
+    Stream.runCollect(responsePayloads(response)).pipe(
+      Effect.map((payloads) => Array.from(payloads)),
+    );
+
   it.effect("parses LF-framed data events", () =>
     Effect.gen(function* () {
       const payloads = yield* collectPayloads(
