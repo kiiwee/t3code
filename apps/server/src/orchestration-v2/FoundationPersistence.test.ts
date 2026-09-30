@@ -20,6 +20,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -2821,6 +2822,15 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       const runId = RunId.make("run:foundation-native-subagent");
       const subagentId = NodeId.make("node:foundation-native-subagent");
       const childRootId = NodeId.make("node:foundation-native-subagent-child-root");
+      const childProviderThreadId = ProviderThreadId.make(
+        "provider-thread:foundation-native-subagent-child",
+      );
+      const completedTurnId = ProviderTurnId.make(
+        "provider-turn:foundation-native-subagent-child:completed",
+      );
+      const runningTurnId = ProviderTurnId.make(
+        "provider-turn:foundation-native-subagent-child:running",
+      );
       const parent = makeThread(parentId, now);
       const child: OrchestrationV2AppThread = {
         ...makeThread(childId, now),
@@ -2909,7 +2919,89 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
             threadId: childId,
             nodeId: childRootId,
             occurredAt: now,
-            payload: node({ id: childRootId, threadId: childId, runId: null, kind: "root_turn" }),
+            payload: {
+              ...node({ id: childRootId, threadId: childId, runId: null, kind: "root_turn" }),
+              providerThreadId: childProviderThreadId,
+              providerTurnId: runningTurnId,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-native-subagent:child-provider-thread"),
+            type: "provider-thread.updated",
+            threadId: childId,
+            nodeId: childRootId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: childProviderThreadId,
+              driver: providerDriver,
+              providerInstanceId,
+              providerSessionId: null,
+              appThreadId: childId,
+              ownerNodeId: childRootId,
+              nativeThreadRef: {
+                driver: providerDriver,
+                nativeId: "native-thread:foundation-native-subagent-child",
+                strength: "strong",
+              },
+              nativeConversationHeadRef: null,
+              status: "active",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-native-subagent:child-turn-completed"),
+            type: "provider-turn.updated",
+            threadId: childId,
+            nodeId: childRootId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: completedTurnId,
+              providerThreadId: childProviderThreadId,
+              nodeId: childRootId,
+              runAttemptId: null,
+              nativeTurnRef: {
+                driver: providerDriver,
+                nativeId: "native-turn:foundation-native-subagent-child:completed",
+                strength: "strong",
+              },
+              ordinal: 1,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-native-subagent:child-turn-running"),
+            type: "provider-turn.updated",
+            threadId: childId,
+            nodeId: childRootId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: runningTurnId,
+              providerThreadId: childProviderThreadId,
+              nodeId: childRootId,
+              runAttemptId: null,
+              nativeTurnRef: {
+                driver: providerDriver,
+                nativeId: "native-turn:foundation-native-subagent-child:running",
+                strength: "strong",
+              },
+              ordinal: 2,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
           },
           {
             // The subagent's live thinking in the child, still streaming.
@@ -2923,8 +3015,8 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
               threadId: childId,
               runId: null,
               nodeId: childRootId,
-              providerThreadId: null,
-              providerTurnId: null,
+              providerThreadId: childProviderThreadId,
+              providerTurnId: runningTurnId,
               nativeItemRef: null,
               parentItemId: null,
               ordinal: 101,
@@ -3019,6 +3111,18 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         ),
       );
       assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), childId);
+      const recoveryProjection = yield* projectionStore.getRuntimeRecoveryProjection(childId);
+      assert.equal(
+        recoveryProjection.providerTurns.find((turn) => turn.id === runningTurnId)?.status,
+        "running",
+      );
+      assert.isNull(
+        recoveryProjection.providerTurns.find((turn) => turn.id === runningTurnId)?.runAttemptId ??
+          null,
+      );
+      assert.isUndefined(
+        recoveryProjection.providerTurns.find((turn) => turn.id === completedTurnId),
+      );
       yield* recovery.recover;
 
       const parentProjection = yield* projectionStore.getThreadProjection(parentId);
@@ -3032,6 +3136,14 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.equal(progress?.status, "cancelled");
       assert.isFalse(progress?.type === "reasoning" && progress.streaming);
       assert.isNotNull(progress?.completedAt ?? null);
+      const runningTurn = childProjection.providerTurns.find((turn) => turn.id === runningTurnId);
+      assert.equal(runningTurn?.status, "cancelled");
+      assert.isNotNull(runningTurn?.completedAt ?? null);
+      const completedTurn = childProjection.providerTurns.find(
+        (turn) => turn.id === completedTurnId,
+      );
+      assert.equal(completedTurn?.status, "completed");
+      assert.isNotNull(completedTurn?.completedAt ?? null);
       assert.notInclude(yield* projectionStore.getRecoveryThreadIds("runtime"), childId);
     }),
   );
